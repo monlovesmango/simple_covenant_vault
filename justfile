@@ -20,6 +20,11 @@ cancel:
 complete:
     RUST_LOG=info ./target/release/purrfect_vault complete
 
+switch:
+    RUST_LOG=info ./target/release/purrfect_vault switch
+
+delete: 
+    rm ./vault_covenant.json
 
 ###################################
 # Build and boostrapping commands #

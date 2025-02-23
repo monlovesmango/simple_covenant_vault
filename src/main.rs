@@ -34,6 +34,7 @@ enum Action {
     Complete,
     Cancel,
     Status,
+    Switch,
 }
 
 fn main() -> Result<()> {
@@ -64,7 +65,13 @@ fn main() -> Result<()> {
         Action::Complete => complete(&settings)?,
         Action::Cancel => cancel(&settings)?,
         Action::Status => status(&settings)?,
+        Action::Switch => switch(&settings)?,
     }
+    Ok(())
+}
+
+fn switch(_settings: &Settings) -> Result<()> {
+    info!("switch triggered");
     Ok(())
 }
 
