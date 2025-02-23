@@ -4,7 +4,7 @@ use anyhow::Result;
 use bitcoin::Network;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct Settings {
     pub network: Network,
     pub bitcoin_rpc_username: String,

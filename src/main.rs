@@ -65,13 +65,24 @@ fn main() -> Result<()> {
         Action::Complete => complete(&settings)?,
         Action::Cancel => cancel(&settings)?,
         Action::Status => status(&settings)?,
-        Action::Switch => switch(&settings)?,
+        Action::Switch => switch(&settings, &args.settings_file)?,
     }
     Ok(())
 }
 
-fn switch(_settings: &Settings) -> Result<()> {
-    info!("switch triggered");
+fn switch(settings: &Settings, settings_file: &PathBuf) -> Result<()> {
+    info!("Switching vault type!");
+    let mut new_settings = settings.clone();
+    if settings.vault_type == "CAT" {
+        new_settings.vault_type = "CTV".to_string();
+    } else {
+        new_settings.vault_type = "CAT".to_string();
+    }
+    new_settings.to_toml_file(settings_file)?;
+    info!(
+        "The previous vault type was {}, you are now using vault type {}",
+        settings.vault_type, new_settings.vault_type
+    );
     Ok(())
 }
 
