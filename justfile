@@ -9,10 +9,10 @@ deposit:
     RUST_LOG=info ./target/release/purrfect_vault deposit
 
 trigger:
-    RUST_LOG=info ./target/release/purrfect_vault trigger $({{ bcli }} -rpcwallet=miner getnewaddress)
+    RUST_LOG=info ./target/release/purrfect_vault trigger
 
 steal:
-    RUST_LOG=info ./target/release/purrfect_vault steal $({{ bcli }} -rpcwallet=miner getnewaddress)
+    RUST_LOG=info ./target/release/purrfect_vault steal
 
 cancel:
     RUST_LOG=info ./target/release/purrfect_vault cancel

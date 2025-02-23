@@ -1,9 +1,8 @@
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use anyhow::Result;
 use bitcoin::consensus::Encodable;
-use bitcoin::{Address, Amount, OutPoint, TxOut};
+use bitcoin::{Amount, OutPoint, TxOut};
 use bitcoincore_rpc::{RawTx, RpcApi};
 use clap::Parser;
 use log::{debug, error, info};
@@ -29,8 +28,8 @@ struct Cli {
 #[derive(Parser)]
 enum Action {
     Deposit,
-    Trigger { destination: String },
-    Steal { destination: String },
+    Trigger,
+    Steal,
     Complete,
     Cancel,
     Status,
@@ -60,8 +59,8 @@ fn main() -> Result<()> {
 
     match args.action {
         Action::Deposit => deposit(&settings)?,
-        Action::Trigger { destination } => trigger(&destination, false, &settings)?,
-        Action::Steal { destination } => trigger(&destination, true, &settings)?,
+        Action::Trigger => trigger(false, &settings)?,
+        Action::Steal => trigger(true, &settings)?,
         Action::Complete => complete(&settings)?,
         Action::Cancel => cancel(&settings)?,
         Action::Status => status(&settings)?,
@@ -181,14 +180,14 @@ fn complete(settings: &Settings) -> Result<()> {
     Ok(())
 }
 
-fn trigger(destination: &str, steal: bool, settings: &Settings) -> Result<()> {
+fn trigger(steal: bool, settings: &Settings) -> Result<()> {
     info!("Triggering a withdrawal");
     let miner_wallet = Wallet::new("miner", settings);
     let fee_wallet = Wallet::new("fee_payment", settings);
+    let withdrawal_wallet = Wallet::new("withdrawal", settings);
     let mut vault = VaultCovenant::from_file(&settings.vault_file)?;
 
-    let withdrawal_address = Address::from_str(destination)?.require_network(settings.network)?;
-
+    let withdrawal_address = withdrawal_wallet.get_new_address()?;
     let fee_paying_address = fee_wallet.get_new_address()?;
     let fee_paying_utxo = miner_wallet.send(&fee_paying_address, Amount::from_sat(10_000))?;
     miner_wallet.mine_blocks(Some(1))?;
