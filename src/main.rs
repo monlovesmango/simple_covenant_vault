@@ -96,6 +96,7 @@ fn status(settings: &Settings) -> Result<()> {
     let latest_vault_transaction =
         client.get_raw_transaction(&vault.get_current_outpoint()?.txid, None)?;
     let latest_state_onchain: VaultState = (latest_vault_transaction, vault.address()?).into();
+    info!("Vault type is {}", settings.vault_type);
     if latest_state_onchain == vault.get_state() {
         info!(
             "Vault state is consistent with the latest on-chain transaction: {:?}",
