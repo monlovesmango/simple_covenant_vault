@@ -70,6 +70,10 @@ fn main() -> Result<()> {
 }
 
 fn switch(settings: &Settings, settings_file: &PathBuf) -> Result<()> {
+    if VaultCovenant::from_file(&settings.vault_file).is_ok() {
+        info!("Vault already exists. Delete the vault file if you want to switch vault type.");
+        return Ok(());
+    }
     info!("Switching vault type!");
     let mut new_settings = settings.clone();
     if settings.vault_type == "CAT" {
