@@ -26,7 +26,7 @@ complete:
 ###################################
 
 bitcoin_datadir := "./bitcoin-data"
-bcli := "./bitcoin-core-cat/src/bitcoin-cli -regtest -rpcuser=user -rpcpassword=password"
+bcli := "../../bitcoin-inquisition/bitcoin/src/bitcoin-cli -regtest -rpcuser=user -rpcpassword=password"
 
 start-bitcoind *ARGS:
     mkdir -p {{ bitcoin_datadir }}
@@ -42,9 +42,9 @@ build:
     cargo build --release
 
 bootstrap:
-    bash ./scripts/build_bitcoincore.sh
+    #bash ./scripts/build_bitcoincore.sh
     just build
-    just clean-bitcoin-data
-    just start-bitcoind
+    #just clean-bitcoin-data
+    #just start-bitcoind
 
 
