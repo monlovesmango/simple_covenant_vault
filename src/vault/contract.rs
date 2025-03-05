@@ -21,6 +21,7 @@ use std::str::FromStr;
 
 use crate::settings::Settings;
 use crate::vault::script::{
+    ctv_vault_cancel_withdrawal, ctv_vault_complete_withdrawal, ctv_vault_deposit,
     vault_cancel_withdrawal, vault_complete_withdrawal, vault_trigger_withdrawal,
 };
 use crate::vault::signature_building;
@@ -166,8 +167,16 @@ impl VaultCovenant {
         self.state.clone()
     }
 
+    pub(crate) fn get_type(&self) -> VaultType {
+        self.vault_type.clone()
+    }
+
     pub(crate) fn address(&self) -> Result<Address> {
-        let spend_info = self.taproot_spend_info()?;
+        let spend_info = if self.vault_type == VaultType::CAT {
+            self.taproot_spend_info()?
+        } else {
+            self.ctv_taproot_spend_info()?
+        };
         Ok(Address::p2tr_tweaked(spend_info.output_key(), self.network))
     }
 
@@ -187,6 +196,62 @@ impl VaultCovenant {
             .add_leaf(2, vault_cancel_withdrawal(self.x_only_public_key()))?
             .finalize(&secp, nums_key)
             .expect("finalizing taproot spend info with a NUMS point should always work"))
+    }
+
+    fn ctv_taproot_spend_info(&self) -> Result<TaprootSpendInfo> {
+        let secp = Secp256k1::new();
+        let key_pair = Keypair::new(&secp, &mut rand::thread_rng());
+        // Random unspendable XOnlyPublicKey provided for internal key
+        let (unspendable_pubkey, _parity) = XOnlyPublicKey::from_keypair(&key_pair);
+
+        Ok(TaprootBuilder::new()
+            .add_leaf(0, ctv_vault_deposit(self.ctv_hash()))?
+            .finalize(&secp, unspendable_pubkey)
+            .expect("finalizing taproot spend info with a new keypair should always work"))
+    }
+
+    fn ctv_trigger_address(&self) -> Result<Address> {
+        let secp = Secp256k1::new();
+        let key_pair = Keypair::new(&secp, &mut rand::thread_rng());
+        // Random unspendable XOnlyPublicKey provided for internal key
+        let (unspendable_pubkey, _parity) = XOnlyPublicKey::from_keypair(&key_pair);
+
+        let spend_info = TaprootBuilder::new()
+            .add_leaf(
+                1,
+                ctv_vault_complete_withdrawal(self.x_only_public_key(), self.timelock_in_blocks),
+            )?
+            .add_leaf(1, ctv_vault_cancel_withdrawal(self.x_only_public_key()))?
+            .finalize(&secp, unspendable_pubkey)
+            .expect("finalizing taproot spend info with a new keypair should always work");
+
+        Ok(Address::p2tr_tweaked(spend_info.output_key(), self.network))
+    }
+
+    fn ctv_hash(&self) -> [u8; 32] {
+        let trigger_txn = self.ctv_trigger_tx_template();
+        let mut buffer = Vec::new();
+        buffer.extend(2_i32.to_le_bytes()); // version
+        buffer.extend(0_i32.to_le_bytes()); // locktime
+        buffer.extend(2_u32.to_le_bytes()); // inputs len
+
+        let seq = sha256::Hash::hash(&Sequence::ENABLE_RBF_NO_LOCKTIME.0.to_le_bytes());
+        buffer.extend(seq.to_byte_array()); // sequences
+
+        let outputs_len = trigger_txn.output.len() as u32;
+        buffer.extend(outputs_len.to_le_bytes()); // outputs len
+
+        let mut output_bytes: Vec<u8> = Vec::new();
+        for o in trigger_txn.output {
+            o.consensus_encode(&mut output_bytes).unwrap();
+        }
+        buffer.extend(sha256::Hash::hash(&output_bytes).to_byte_array()); // outputs hash
+
+        buffer.extend(0_u32.to_le_bytes()); // inputs index
+
+        let hash = sha256::Hash::hash(&buffer);
+        println!("#####hash: {}", hash);
+        hash.to_byte_array()
     }
 
     fn x_only_public_key(&self) -> XOnlyPublicKey {
@@ -623,6 +688,70 @@ impl VaultCovenant {
                 .expect("control block should work")
                 .serialize(),
         );
+        txn.input.first_mut().unwrap().witness = vault_txin.witness.clone();
+
+        Ok(txn)
+    }
+
+    fn ctv_trigger_tx_template(&self) -> Transaction {
+        let vault_output = TxOut {
+            script_pubkey: self
+                .ctv_trigger_address()
+                .expect("need ctv trigger address")
+                .script_pubkey(),
+            value: self.amount,
+        };
+
+        let txn = Transaction {
+            lock_time: LockTime::ZERO,
+            version: Version::TWO,
+            input: vec![],
+            output: vec![vault_output.clone()],
+        };
+
+        txn
+    }
+
+    pub(crate) fn create_ctv_trigger_tx(&self, fee_paying_utxo: &OutPoint) -> Result<Transaction> {
+        let mut txn = self.ctv_trigger_tx_template();
+        let fee_txin = TxIn {
+            previous_output: *fee_paying_utxo,
+            ..Default::default()
+        };
+        let mut vault_txin = TxIn {
+            previous_output: self
+                .current_outpoint
+                .ok_or(anyhow!("no current outpoint"))?,
+            ..Default::default()
+        };
+        txn.input = vec![vault_txin.clone(), fee_txin];
+        //let mut txn = Transaction {
+        //    lock_time: LockTime::ZERO,
+        //    version: Version::TWO,
+        //    input: vec![vault_txin.clone(), fee_txin],
+        //    output: vec![vault_output.clone()],
+        //};
+        //
+        let script_ver = (ctv_vault_deposit(self.ctv_hash()), LeafVersion::TapScript);
+        let ctrl_block = self
+            .ctv_taproot_spend_info()?
+            .control_block(&script_ver)
+            .unwrap();
+
+        vault_txin.witness.push(script_ver.0.into_bytes());
+        vault_txin.witness.push(ctrl_block.serialize());
+        //vault_txin
+        //    .witness
+        //    .push(ctv_vault_deposit(self.ctv_hash()).to_bytes());
+        //vault_txin.witness.push(
+        //    self.ctv_taproot_spend_info()?
+        //        .control_block(&(
+        //            ctv_vault_deposit(self.ctv_hash()).clone(),
+        //            LeafVersion::TapScript,
+        //        ))
+        //        .expect("control block should work")
+        //        .serialize(),
+        //);
         txn.input.first_mut().unwrap().witness = vault_txin.witness.clone();
 
         Ok(txn)

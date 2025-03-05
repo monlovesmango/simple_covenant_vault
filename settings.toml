@@ -5,4 +5,4 @@ create_wallets = true
 miner_wallet_name = "miner"
 fee_wallet_name = "fee_payment"
 withdrawal_wallet_name = "withdrawal"
-vault_type = "CAT"
+vault_type = "CTV"

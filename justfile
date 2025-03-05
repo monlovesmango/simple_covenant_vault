@@ -52,4 +52,6 @@ bootstrap:
     #just clean-bitcoin-data
     #just start-bitcoind
 
+cli *ARGS:
+    {{ bcli }} {{ ARGS }}
 

@@ -1,10 +1,13 @@
 use crate::vault::signature_building::{BIP0340_CHALLENGE_TAG, DUST_AMOUNT, G_X, TAPSIGHASH_TAG};
 use bitcoin::opcodes::all::{
-    OP_2DUP, OP_CAT, OP_CHECKSIG, OP_CSV, OP_DROP, OP_DUP, OP_EQUALVERIFY, OP_FROMALTSTACK,
-    OP_HASH256, OP_ROT, OP_SHA256, OP_SWAP, OP_TOALTSTACK, OP_CHECKSIGVERIFY
+    OP_2DUP, OP_CAT, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_CSV, OP_DROP, OP_DUP, OP_ELSE, OP_ENDIF,
+    OP_EQUALVERIFY, OP_FROMALTSTACK, OP_HASH256, OP_IF, OP_NOP4, OP_ROT, OP_SHA256, OP_SWAP,
+    OP_TOALTSTACK,
 };
 use bitcoin::script::Builder;
-use bitcoin::{Script, ScriptBuf, Sequence, XOnlyPublicKey};
+use bitcoin::{Opcode, Script, ScriptBuf, Sequence, XOnlyPublicKey};
+
+const OP_CTV: Opcode = OP_NOP4;
 
 pub(crate) fn vault_trigger_withdrawal(x_only_pubkey: XOnlyPublicKey) -> ScriptBuf {
     let mut builder = Script::builder();
@@ -75,7 +78,10 @@ pub(crate) fn vault_trigger_withdrawal(x_only_pubkey: XOnlyPublicKey) -> ScriptB
     builder.into_script()
 }
 
-pub(crate) fn vault_complete_withdrawal(x_only_pubkey: XOnlyPublicKey, timelock_in_blocks: u16) -> ScriptBuf {
+pub(crate) fn vault_complete_withdrawal(
+    x_only_pubkey: XOnlyPublicKey,
+    timelock_in_blocks: u16,
+) -> ScriptBuf {
     let mut builder = Script::builder();
     // The witness program needs to have the signature components except the outputs, prevouts,
     // followed by the previous transaction version, inputs, and locktime
@@ -243,7 +249,7 @@ pub(crate) fn add_signature_construction_and_check(builder: Builder) -> Builder 
         .push_opcode(OP_CAT) // cat the R value with the s value for a complete signature
         .push_opcode(OP_FROMALTSTACK) // bring G back from the alt stack to use as the R value in the signature
         .push_opcode(OP_FROMALTSTACK) // grab the pre-computed signature minus the last byte from the alt stack
-        .push_opcode(OP_ROT)// Move the G value to the bottom of the stack
+        .push_opcode(OP_ROT) // Move the G value to the bottom of the stack
         .push_opcode(OP_SWAP) // put the pre-computed signature on the top of the stack
         .push_opcode(OP_DUP) // we'll need a second copy later to do the actual signature verification
         .push_opcode(OP_FROMALTSTACK) // grab the last byte of the signature hash from the alt stack
@@ -254,4 +260,31 @@ pub(crate) fn add_signature_construction_and_check(builder: Builder) -> Builder 
         .push_opcode(OP_CAT)
         .push_opcode(OP_SWAP) // bring G to the top of the stack
         .push_opcode(OP_CHECKSIG)
+}
+
+pub(crate) fn ctv_vault_deposit(ctv_hash: [u8; 32]) -> ScriptBuf {
+    Builder::new()
+        .push_slice(ctv_hash)
+        .push_opcode(OP_CTV)
+        .into_script()
+}
+
+pub(crate) fn ctv_vault_complete_withdrawal(
+    x_only_pubkey: XOnlyPublicKey,
+    timelock_in_blocks: u16,
+) -> ScriptBuf {
+    Builder::new()
+        .push_sequence(Sequence::from_height(timelock_in_blocks))
+        .push_opcode(OP_CSV) // check relative timelock on withdrawal
+        .push_opcode(OP_DROP) // drop the result
+        .push_x_only_key(&x_only_pubkey) // push vault pubkey
+        .push_opcode(OP_CHECKSIGVERIFY) // checksig for pubkey
+        .into_script()
+}
+
+pub(crate) fn ctv_vault_cancel_withdrawal(x_only_pubkey: XOnlyPublicKey) -> ScriptBuf {
+    Builder::new()
+        .push_x_only_key(&x_only_pubkey) // push vault pubkey
+        .push_opcode(OP_CHECKSIGVERIFY) // checksig for pubkey
+        .into_script()
 }

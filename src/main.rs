@@ -9,7 +9,8 @@ use log::{debug, error, info};
 
 use crate::settings::Settings;
 use crate::vault::contract::VaultState::{Completed, Inactive, Triggered};
-use crate::vault::contract::{VaultCovenant, VaultState};
+use crate::vault::contract::VaultType::{CAT, CTV};
+use crate::vault::contract::{VaultCovenant, VaultState, VaultType};
 use crate::wallet::Wallet;
 
 mod settings;
@@ -71,7 +72,7 @@ fn main() -> Result<()> {
 
 fn switch(settings: &Settings, settings_file: &PathBuf) -> Result<()> {
     if VaultCovenant::from_file(&settings.vault_file).is_ok() {
-        info!("Vault already exists. Delete the vault file if you want to switch vault type.");
+        info!("Vault already exists. Delete the vault file to start over if you want to switch vault type.");
         return Ok(());
     }
     info!("Switching vault type!");
@@ -195,14 +196,18 @@ fn trigger(steal: bool, settings: &Settings) -> Result<()> {
     let fee_paying_address = fee_wallet.get_new_address()?;
     let fee_paying_utxo = miner_wallet.send(&fee_paying_address, Amount::from_sat(10_000))?;
     miner_wallet.mine_blocks(Some(1))?;
-    let trigger_tx = vault.create_trigger_tx(
-        &fee_paying_utxo,
-        TxOut {
-            script_pubkey: fee_paying_address.script_pubkey(),
-            value: Amount::from_sat(10_000),
-        },
-        &withdrawal_address,
-    )?;
+    let trigger_tx = if vault.get_type() == VaultType::CAT {
+        vault.create_trigger_tx(
+            &fee_paying_utxo,
+            TxOut {
+                script_pubkey: fee_paying_address.script_pubkey(),
+                value: Amount::from_sat(10_000),
+            },
+            &withdrawal_address,
+        )?
+    } else {
+        vault.create_ctv_trigger_tx(&fee_paying_utxo)?
+    };
     let signed_tx = fee_wallet.sign_tx(&trigger_tx)?;
     let mut serialized_tx = Vec::new();
     signed_tx.consensus_encode(&mut serialized_tx).unwrap();
