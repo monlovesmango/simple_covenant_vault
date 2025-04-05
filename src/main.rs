@@ -9,7 +9,6 @@ use log::{debug, error, info};
 
 use crate::settings::Settings;
 use crate::vault::contract::VaultState::{Completed, Inactive, Triggered};
-use crate::vault::contract::VaultType::{CAT, CTV};
 use crate::vault::contract::{VaultCovenant, VaultState, VaultType};
 use crate::wallet::Wallet;
 
@@ -116,6 +115,10 @@ fn status(settings: &Settings) -> Result<()> {
             latest_state_onchain
         );
     }
+    debug!(
+        "Vault current outpoint is {}",
+        &vault.get_current_outpoint().unwrap()
+    );
     Ok(())
 }
 
@@ -248,12 +251,12 @@ fn deposit(settings: &Settings) -> Result<()> {
 
     println!("lets make a vault");
     let timelock_in_blocks = 20;
-    let mut vault = VaultCovenant::new(timelock_in_blocks, &settings)?;
+    let mut vault =
+        VaultCovenant::new(timelock_in_blocks, Amount::from_sat(100_000_000), &settings)?;
 
     info!("depositing into vault");
     let vault_address = vault.address()?;
     let deposit_tx = miner_wallet.send(&vault_address, Amount::from_sat(100_000_000))?;
-    vault.set_amount(Amount::from_sat(100_000_000));
     vault.set_current_outpoint(deposit_tx);
     info!("deposit txid: {}", deposit_tx.txid);
     miner_wallet.mine_blocks(Some(1))?;

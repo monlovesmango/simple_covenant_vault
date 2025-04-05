@@ -35,7 +35,7 @@ bcli := "../../bitcoin-inquisition/bitcoin/src/bitcoin-cli -regtest -rpcuser=use
 
 start-bitcoind *ARGS:
     mkdir -p {{ bitcoin_datadir }}
-    ./bitcoin-core-cat/src/bitcoind -regtest -timeout=15000 -server=1 -txindex=1 -rpcuser=user -rpcpassword=password -datadir={{bitcoin_datadir}} {{ ARGS }}
+    ../../bitcoin-inquisition/bitcoin/src/bitcoind -regtest -timeout=15000 -server=1 -txindex=1 -rpcuser=user -rpcpassword=password -minrelaytxfee=0 {{ ARGS }}
 
 stop-bitcoind:
     {{ bcli }} stop
