@@ -21,8 +21,8 @@ use std::str::FromStr;
 
 use crate::settings::Settings;
 use crate::vault::script::{
-    ctv_vault_cancel_withdrawal, ctv_vault_deposit, vault_cancel_withdrawal,
-    vault_complete_withdrawal, vault_trigger_withdrawal,
+    ctv_vault_cancel_withdrawal, ctv_vault_complete_withdrawal, ctv_vault_deposit,
+    vault_cancel_withdrawal, vault_complete_withdrawal, vault_trigger_withdrawal,
 };
 use crate::vault::signature_building;
 use crate::vault::signature_building::{get_sigmsg_components, TxCommitmentSpec};
@@ -223,12 +223,12 @@ impl VaultCovenant {
         let secp = Secp256k1::new();
 
         let spend_info = TaprootBuilder::new()
-            //.add_leaf(
-            //    1,
-            //    ctv_vault_complete_withdrawal(self.x_only_public_key(), self.timelock_in_blocks),
-            //)?
-            //.add_leaf(1, ctv_vault_cancel_withdrawal(self.x_only_public_key()))?
-            .add_leaf(0, ctv_vault_cancel_withdrawal(self.x_only_public_key()))?
+            .add_leaf(
+                1,
+                ctv_vault_complete_withdrawal(self.x_only_public_key(), self.timelock_in_blocks),
+            )?
+            .add_leaf(1, ctv_vault_cancel_withdrawal(self.x_only_public_key()))?
+            //.add_leaf(0, ctv_vault_cancel_withdrawal(self.x_only_public_key()))?
             .finalize(&secp, nums_key)
             .expect("finalizing taproot spend info with a new keypair should always work");
         Ok(Address::p2tr_tweaked(spend_info.output_key(), self.network))
