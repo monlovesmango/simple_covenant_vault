@@ -19,7 +19,7 @@ use secp256kfun::{Point, G};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-use crate::settings::Settings;
+use crate::settings::{self, Settings};
 use crate::vault::script::{
     ctv_vault_cancel_withdrawal, ctv_vault_complete_withdrawal, ctv_vault_deposit,
     vault_cancel_withdrawal, vault_complete_withdrawal, vault_trigger_withdrawal,
@@ -88,20 +88,25 @@ impl Default for VaultCovenant {
 }
 
 impl VaultCovenant {
-    pub(crate) fn new(
+    pub(crate) fn new(timelock_in_blocks: u16, settings: &Settings) -> Result<Self> {
+        Ok(Self {
+            network: settings.network,
+            timelock_in_blocks,
+            vault_type: VaultType::CAT,
+            ..Default::default()
+        })
+    }
+
+    pub(crate) fn new_ctv(
         timelock_in_blocks: u16,
         amount: Amount,
         settings: &Settings,
     ) -> Result<Self> {
-        let mut vault_type = VaultType::CAT;
-        if settings.vault_type == "CTV" {
-            vault_type = VaultType::CTV;
-        }
         Ok(Self {
             network: settings.network,
             timelock_in_blocks,
             amount,
-            vault_type,
+            vault_type: VaultType::CTV,
             ..Default::default()
         })
     }
@@ -134,6 +139,9 @@ impl VaultCovenant {
         self.current_outpoint.ok_or(anyhow!("no current outpoint"))
     }
 
+    pub(crate) fn set_amount(&mut self, amount: Amount) {
+        self.amount = amount
+    }
     pub(crate) fn set_withdrawal_address(&mut self, address: Option<Address>) {
         self.withdrawal_address = address.map(|a| a.to_string());
     }
@@ -271,13 +279,6 @@ impl VaultCovenant {
         buffer.extend((txn.output.len() as u32).to_le_bytes()); // outputs len
         buffer.extend(components[3].clone()); // outputs hash
         buffer.extend(components[4].clone()); // input index
-        debug!(
-            "sequences {}",
-            &Sequence::ENABLE_RBF_NO_LOCKTIME
-                .0
-                .to_le_bytes()
-                .to_hex_string(Case::Lower)
-        );
 
         let hash = sha256::Hash::hash(&buffer);
 

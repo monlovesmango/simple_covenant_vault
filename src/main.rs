@@ -251,12 +251,18 @@ fn deposit(settings: &Settings) -> Result<()> {
 
     println!("lets make a vault");
     let timelock_in_blocks = 20;
-    let mut vault =
-        VaultCovenant::new(timelock_in_blocks, Amount::from_sat(100_000_000), &settings)?;
+    let amount = Amount::from_sat(100_000_000);
+    let mut vault = if &settings.vault_type == "CAT" {
+        VaultCovenant::new(timelock_in_blocks, &settings)?
+    } else {
+        VaultCovenant::new_ctv(timelock_in_blocks, amount, &settings)?
+    };
+    //let mut vault = VaultCovenant::new(timelock_in_blocks, amount, &settings)?;
 
     info!("depositing into vault");
     let vault_address = vault.address()?;
-    let deposit_tx = miner_wallet.send(&vault_address, Amount::from_sat(100_000_000))?;
+    let deposit_tx = miner_wallet.send(&vault_address, amount)?;
+    vault.set_amount(amount);
     vault.set_current_outpoint(deposit_tx);
     info!("deposit txid: {}", deposit_tx.txid);
     miner_wallet.mine_blocks(Some(1))?;
