@@ -19,7 +19,7 @@ use secp256kfun::{Point, G};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-use crate::settings::{self, Settings};
+use crate::settings::Settings;
 use crate::vault::script::{
     ctv_vault_cancel_withdrawal, ctv_vault_complete_withdrawal, ctv_vault_deposit,
     vault_cancel_withdrawal, vault_complete_withdrawal, vault_trigger_withdrawal,
@@ -185,7 +185,7 @@ impl VaultCovenant {
         let spend_info = if self.vault_type == VaultType::CAT {
             self.taproot_spend_info()?
         } else {
-            self.ctv_taproot_spend_info()?
+            self.ctv_deposit_spend_info()?
         };
         Ok(Address::p2tr_tweaked(spend_info.output_key(), self.network))
     }
@@ -208,7 +208,7 @@ impl VaultCovenant {
             .expect("finalizing taproot spend info with a NUMS point should always work"))
     }
 
-    fn ctv_taproot_spend_info(&self) -> Result<TaprootSpendInfo> {
+    fn ctv_deposit_spend_info(&self) -> Result<TaprootSpendInfo> {
         // hash G into a NUMS point
         let hash = sha256::Hash::hash(G.to_bytes_uncompressed().as_slice());
         let point: Point<EvenY, Public, NonZero> = Point::from_xonly_bytes(hash.into_32())
@@ -222,7 +222,7 @@ impl VaultCovenant {
             .expect("finalizing taproot spend info with a new keypair should always work"))
     }
 
-    fn ctv_trigger_address(&self) -> Result<Address> {
+    fn ctv_trigger_spend_info(&self) -> Result<TaprootSpendInfo> {
         // hash G into a NUMS point
         let hash = sha256::Hash::hash(G.to_bytes_uncompressed().as_slice());
         let point: Point<EvenY, Public, NonZero> = Point::from_xonly_bytes(hash.into_32())
@@ -230,7 +230,7 @@ impl VaultCovenant {
         let nums_key = XOnlyPublicKey::from_slice(point.to_xonly_bytes().as_slice())?;
         let secp = Secp256k1::new();
 
-        let spend_info = TaprootBuilder::new()
+        Ok(TaprootBuilder::new()
             .add_leaf(
                 1,
                 ctv_vault_complete_withdrawal(self.x_only_public_key(), self.timelock_in_blocks),
@@ -238,12 +238,9 @@ impl VaultCovenant {
             .add_leaf(1, ctv_vault_cancel_withdrawal(self.x_only_public_key()))?
             //.add_leaf(0, ctv_vault_cancel_withdrawal(self.x_only_public_key()))?
             .finalize(&secp, nums_key)
-            .expect("finalizing taproot spend info with a new keypair should always work");
-        Ok(Address::p2tr_tweaked(spend_info.output_key(), self.network))
+            .expect("finalizing taproot spend info with a new keypair should always work"))
     }
-    //020000000001000100e1f50500000000225120ea1a9e2d42a7c9dc6fc31fe39d200e4d620527c4dbc3f9a9c45a43c1d90a2b6600000000
-    //020000000001000100e1f50500000000225120ea1a9e2d42a7c9dc6fc31fe39d200e4d620527c4dbc3f9a9c45a43c1d90a2b6600000000
-    //020000000001000100e1f50500000000225120ea1a9e2d42a7c9dc6fc31fe39d200e4d620527c4dbc3f9a9c45a43c1d90a2b6600000000
+
     fn ctv_hash(&self) -> [u8; 32] {
         let txn = self.ctv_trigger_tx_template();
 
@@ -725,11 +722,12 @@ impl VaultCovenant {
     }
 
     fn ctv_trigger_tx_template(&self) -> Transaction {
+        let ctv_trigger_address = Address::p2tr_tweaked(
+            self.ctv_trigger_spend_info().unwrap().output_key(),
+            self.network,
+        );
         let output = TxOut {
-            script_pubkey: self
-                .ctv_trigger_address()
-                .expect("need ctv trigger address")
-                .script_pubkey(),
+            script_pubkey: ctv_trigger_address.script_pubkey(),
             value: self.amount,
         };
         let input = TxIn {
@@ -767,7 +765,7 @@ impl VaultCovenant {
             .witness
             .push(ctv_vault_deposit(self.ctv_hash()).to_bytes());
         trigger_txin.witness.push(
-            self.ctv_taproot_spend_info()?
+            self.ctv_deposit_spend_info()?
                 .control_block(&(
                     ctv_vault_deposit(self.ctv_hash()).clone(),
                     LeafVersion::TapScript,
