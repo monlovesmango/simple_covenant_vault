@@ -726,6 +726,69 @@ impl VaultCovenant {
         Ok(txn)
     }
 
+    pub(crate) fn create_ctv_complete_tx(
+        &self,
+        fee_paying_utxo: &OutPoint,
+        fee_paying_output: TxOut,
+    ) -> Result<Transaction> {
+        let mut vault_txin = TxIn {
+            previous_output: self
+                .current_outpoint
+                .ok_or(anyhow!("no current outpoint"))?,
+            sequence: Sequence::from_height(self.timelock_in_blocks),
+            ..Default::default()
+        };
+        let fee_txin = TxIn {
+            previous_output: fee_paying_utxo.clone(),
+            ..Default::default()
+        };
+        let output = TxOut {
+            script_pubkey: self.get_withdrawal_address()?.script_pubkey(),
+            value: self.amount,
+        };
+        let mut txn = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![vault_txin.clone(), fee_txin],
+            output: vec![output],
+        };
+        let leafhash = TapLeafHash::from_script(
+            &ctv_vault_complete_withdrawal(self.x_only_public_key(), self.timelock_in_blocks),
+            LeafVersion::TapScript,
+        );
+        let vault_txout = TxOut {
+            script_pubkey: self.ctv_trigger_address()?.script_pubkey().clone(),
+            value: self.amount,
+        };
+        let sig = self.sign_transaction(
+            &txn,
+            &[vault_txout.clone(), fee_paying_output.clone()],
+            leafhash,
+        );
+        vault_txin.witness.push(sig);
+
+        vault_txin.witness.push(
+            ctv_vault_complete_withdrawal(self.x_only_public_key(), self.timelock_in_blocks)
+                .to_bytes(),
+        );
+        vault_txin.witness.push(
+            self.ctv_trigger_spend_info()?
+                .control_block(&(
+                    ctv_vault_complete_withdrawal(
+                        self.x_only_public_key(),
+                        self.timelock_in_blocks,
+                    )
+                    .clone(),
+                    LeafVersion::TapScript,
+                ))
+                .expect("control block should work")
+                .serialize(),
+        );
+        txn.input.first_mut().unwrap().witness = vault_txin.witness.clone();
+
+        Ok(txn)
+    }
+
     pub(crate) fn create_ctv_cancel_tx(
         &self,
         fee_paying_utxo: &OutPoint,

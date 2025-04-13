@@ -175,15 +175,20 @@ fn complete(settings: &Settings) -> Result<()> {
     let fee_paying_utxo = miner_wallet.send(&fee_paying_address, Amount::from_sat(10_000))?;
     info!("need to mine {timelock_in_blocks} blocks for the timelock");
     miner_wallet.mine_blocks(Some(timelock_in_blocks as u64))?;
-    let compete_tx = vault.create_complete_tx(
-        &fee_paying_utxo,
-        TxOut {
-            script_pubkey: fee_paying_address.script_pubkey(),
-            value: Amount::from_sat(10_000),
-        },
-        &withdrawal_address,
-        &trigger_tx,
-    )?;
+    let fee_paying_output = TxOut {
+        script_pubkey: fee_paying_address.script_pubkey(),
+        value: Amount::from_sat(10_000),
+    };
+    let compete_tx = if vault.get_type() == VaultType::CAT {
+        vault.create_complete_tx(
+            &fee_paying_utxo,
+            fee_paying_output,
+            &withdrawal_address,
+            &trigger_tx,
+        )?
+    } else {
+        vault.create_ctv_complete_tx(&fee_paying_utxo, fee_paying_output)?
+    };
     let signed_tx = fee_wallet.sign_tx(&compete_tx)?;
     let mut serialized_tx = Vec::new();
     signed_tx.consensus_encode(&mut serialized_tx).unwrap();
