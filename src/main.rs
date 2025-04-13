@@ -130,13 +130,23 @@ fn cancel(settings: &Settings) -> Result<()> {
 
     let fee_paying_address = fee_wallet.get_new_address()?;
     let fee_paying_utxo = miner_wallet.send(&fee_paying_address, Amount::from_sat(10_000))?;
-    let cancel_tx = vault.create_cancel_tx(
-        &fee_paying_utxo,
-        TxOut {
-            script_pubkey: fee_paying_address.script_pubkey(),
-            value: Amount::from_sat(10_000),
-        },
-    )?;
+    let cancel_tx = if vault.get_type() == VaultType::CAT {
+        vault.create_cancel_tx(
+            &fee_paying_utxo,
+            TxOut {
+                script_pubkey: fee_paying_address.script_pubkey(),
+                value: Amount::from_sat(10_000),
+            },
+        )?
+    } else {
+        vault.create_ctv_cancel_tx(
+            &fee_paying_utxo,
+            TxOut {
+                script_pubkey: fee_paying_address.script_pubkey(),
+                value: Amount::from_sat(10_000),
+            },
+        )?
+    };
 
     let signed_tx = fee_wallet.sign_tx(&cancel_tx)?;
     let mut serialized_tx = Vec::new();

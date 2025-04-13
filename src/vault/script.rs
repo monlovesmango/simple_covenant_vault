@@ -277,13 +277,13 @@ pub(crate) fn ctv_vault_complete_withdrawal(
         .push_opcode(OP_CSV) // check relative timelock on withdrawal
         .push_opcode(OP_DROP) // drop the result
         .push_x_only_key(&x_only_pubkey) // push vault pubkey
-        .push_opcode(OP_CHECKSIGVERIFY) // checksig for pubkey
+        .push_opcode(OP_CHECKSIG) // checksig for pubkey
         .into_script()
 }
 
 pub(crate) fn ctv_vault_cancel_withdrawal(x_only_pubkey: XOnlyPublicKey) -> ScriptBuf {
     Builder::new()
         .push_x_only_key(&x_only_pubkey) // push vault pubkey
-        .push_opcode(OP_CHECKSIGVERIFY) // checksig for pubkey
+        .push_opcode(OP_CHECKSIG) // checksig for pubkey
         .into_script()
 }

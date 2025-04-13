@@ -190,6 +190,11 @@ impl VaultCovenant {
         Ok(Address::p2tr_tweaked(spend_info.output_key(), self.network))
     }
 
+    fn ctv_trigger_address(&self) -> Result<Address> {
+        let spend_info = self.ctv_trigger_spend_info()?;
+        Ok(Address::p2tr_tweaked(spend_info.output_key(), self.network))
+    }
+
     fn taproot_spend_info(&self) -> Result<TaprootSpendInfo> {
         // hash G into a NUMS point
         let hash = sha256::Hash::hash(G.to_bytes_uncompressed().as_slice());
@@ -721,13 +726,67 @@ impl VaultCovenant {
         Ok(txn)
     }
 
-    fn ctv_trigger_tx_template(&self) -> Transaction {
-        let ctv_trigger_address = Address::p2tr_tweaked(
-            self.ctv_trigger_spend_info().unwrap().output_key(),
-            self.network,
-        );
+    pub(crate) fn create_ctv_cancel_tx(
+        &self,
+        fee_paying_utxo: &OutPoint,
+        fee_paying_output: TxOut,
+    ) -> Result<Transaction> {
+        let mut vault_txin = TxIn {
+            previous_output: self
+                .current_outpoint
+                .ok_or(anyhow!("no current outpoint"))?,
+            ..Default::default()
+        };
+        let fee_txin = TxIn {
+            previous_output: fee_paying_utxo.clone(),
+            ..Default::default()
+        };
         let output = TxOut {
-            script_pubkey: ctv_trigger_address.script_pubkey(),
+            script_pubkey: self.address()?.script_pubkey(),
+            value: self.amount,
+        };
+        let mut txn = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![vault_txin.clone(), fee_txin],
+            output: vec![output],
+        };
+        let leafhash = TapLeafHash::from_script(
+            &ctv_vault_cancel_withdrawal(self.x_only_public_key()),
+            LeafVersion::TapScript,
+        );
+
+        let vault_txout = TxOut {
+            script_pubkey: self.ctv_trigger_address()?.script_pubkey().clone(),
+            value: self.amount,
+        };
+        let sig = self.sign_transaction(
+            &txn,
+            &[vault_txout.clone(), fee_paying_output.clone()],
+            leafhash,
+        );
+        vault_txin.witness.push(sig);
+
+        vault_txin
+            .witness
+            .push(ctv_vault_cancel_withdrawal(self.x_only_public_key()).to_bytes());
+        vault_txin.witness.push(
+            self.ctv_trigger_spend_info()?
+                .control_block(&(
+                    ctv_vault_cancel_withdrawal(self.x_only_public_key()).clone(),
+                    LeafVersion::TapScript,
+                ))
+                .expect("control block should work")
+                .serialize(),
+        );
+        txn.input.first_mut().unwrap().witness = vault_txin.witness.clone();
+
+        Ok(txn)
+    }
+
+    fn ctv_trigger_tx_template(&self) -> Transaction {
+        let output = TxOut {
+            script_pubkey: self.ctv_trigger_address().unwrap().script_pubkey(),
             value: self.amount,
         };
         let input = TxIn {
