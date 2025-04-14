@@ -96,10 +96,18 @@ fn status(settings: &Settings) -> Result<()> {
         e
     })?;
     let client = Wallet::create_rpc_client(settings, None);
+    debug!(
+        "Vault current outpoint is {}",
+        &vault.get_current_outpoint().unwrap()
+    );
     let latest_vault_transaction =
         client.get_raw_transaction(&vault.get_current_outpoint()?.txid, None)?;
-    let latest_state_onchain: VaultState = (latest_vault_transaction, vault.address()?).into();
-    info!("Vault type is {}", settings.vault_type);
+    debug!(
+        "Vault last transaction is {}",
+        &latest_vault_transaction.raw_hex()
+    );
+    let latest_state_onchain: VaultState =
+        (latest_vault_transaction, vault.address()?, vault.get_type()).into();
     if latest_state_onchain == vault.get_state() {
         info!(
             "Vault state is consistent with the latest on-chain transaction: {:?}",
@@ -115,10 +123,6 @@ fn status(settings: &Settings) -> Result<()> {
             latest_state_onchain
         );
     }
-    debug!(
-        "Vault current outpoint is {}",
-        &vault.get_current_outpoint().unwrap()
-    );
     Ok(())
 }
 

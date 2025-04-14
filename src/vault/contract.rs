@@ -41,17 +41,27 @@ pub(crate) enum VaultType {
 }
 
 /// Get the vault state from the transaction and the vault address
-impl From<(Transaction, Address)> for VaultState {
-    fn from(spec: (Transaction, Address)) -> Self {
-        let (tx, address) = spec;
-        if tx.output.len() == 2 && tx.output.get(1).unwrap().value == Amount::from_sat(546) {
-            VaultState::Triggered
-        } else if tx.output.len() == 1
-            && tx.output.first().unwrap().script_pubkey != address.script_pubkey()
-        {
-            VaultState::Completed
+impl From<(Transaction, Address, VaultType)> for VaultState {
+    fn from(spec: (Transaction, Address, VaultType)) -> Self {
+        let (tx, address, vault_type) = spec;
+        if vault_type == VaultType::CAT {
+            if tx.output.len() == 2 && tx.output.get(1).unwrap().value == Amount::from_sat(546) {
+                VaultState::Triggered
+            } else if tx.output.len() == 1
+                && tx.output.first().unwrap().script_pubkey != address.script_pubkey()
+            {
+                VaultState::Completed
+            } else {
+                VaultState::Inactive
+            }
         } else {
-            VaultState::Inactive
+            if tx.output.first().unwrap().script_pubkey == address.script_pubkey() {
+                VaultState::Inactive
+            } else if tx.input.first().unwrap().witness.len() == 2 {
+                VaultState::Triggered
+            } else {
+                VaultState::Completed
+            }
         }
     }
 }
