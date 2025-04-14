@@ -3,12 +3,12 @@
 set -e
 
 
-echo "Building a copy of Bitcoin Core with a OP_CAT active..."
+echo "Building a copy of Bitcoin Core with covenants active..."
 
-git clone --depth 1 --branch dont-success-cat git@github.com:rot13maxi/bitcoin.git bitcoin-core-cat || true
+git clone --depth 1 --branch v28.0-inq git@github.com:bitcoin-inquisition/bitcoin.git bitcoin-core-inq || true
 
-pushd bitcoin-core-cat
+pushd bitcoin-core-inq
 ./autogen.sh
 ./configure --without-tests --disable-bench
-make -j4
+make -j10
 popd
