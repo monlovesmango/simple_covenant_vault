@@ -39,8 +39,6 @@ enum Action {
 fn main() -> Result<()> {
     env_logger::init();
 
-    println!("A kinda vault-y thing with CATs!");
-
     let args = Cli::parse();
 
     let settings = match Settings::from_toml_file(&args.settings_file) {
@@ -56,6 +54,8 @@ fn main() -> Result<()> {
             settings
         }
     };
+
+    println!("A simple vault built with {}", settings.vault_type);
 
     match args.action {
         Action::Deposit => deposit(&settings)?,

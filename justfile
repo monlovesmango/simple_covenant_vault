@@ -3,25 +3,25 @@
 #################
 
 status:
-    RUST_LOG=info ./target/release/purrfect_vault status
+    RUST_LOG=info ./target/release/simple_covenant_vault status
 
 deposit:
-    RUST_LOG=info ./target/release/purrfect_vault deposit
+    RUST_LOG=info ./target/release/simple_covenant_vault deposit
 
 trigger:
-    RUST_LOG=info ./target/release/purrfect_vault trigger
+    RUST_LOG=info ./target/release/simple_covenant_vault trigger
 
 steal:
-    RUST_LOG=info ./target/release/purrfect_vault steal
+    RUST_LOG=info ./target/release/simple_covenant_vault steal
 
 cancel:
-    RUST_LOG=info ./target/release/purrfect_vault cancel
+    RUST_LOG=info ./target/release/simple_covenant_vault cancel
 
 complete:
-    RUST_LOG=info ./target/release/purrfect_vault complete
+    RUST_LOG=info ./target/release/simple_covenant_vault complete
 
 switch:
-    RUST_LOG=info ./target/release/purrfect_vault switch
+    RUST_LOG=info ./target/release/simple_covenant_vault switch
 
 delete: 
     rm ./vault_covenant.json
