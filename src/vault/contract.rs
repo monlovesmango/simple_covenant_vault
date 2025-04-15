@@ -75,14 +75,18 @@ pub(crate) struct VaultCovenant {
     withdrawal_address: Option<String>,
     trigger_transaction: Option<Transaction>,
     state: VaultState,
-    keypair: Keypair,
+    vault_keypair: Keypair,
+    withdraw_keypair: Keypair,
+    cancel_keypair: Keypair,
     vault_type: VaultType,
 }
 
 impl Default for VaultCovenant {
     fn default() -> Self {
         let secp = Secp256k1::new();
-        let keypair = Keypair::new(&secp, &mut rand::thread_rng());
+        let vault_keypair = Keypair::new(&secp, &mut rand::thread_rng());
+        let withdraw_keypair = Keypair::new(&secp, &mut rand::thread_rng());
+        let cancel_keypair = Keypair::new(&secp, &mut rand::thread_rng());
         Self {
             current_outpoint: None,
             amount: Amount::ZERO,
@@ -91,7 +95,9 @@ impl Default for VaultCovenant {
             withdrawal_address: None,
             trigger_transaction: None,
             state: VaultState::Inactive,
-            keypair,
+            vault_keypair,
+            withdraw_keypair,
+            cancel_keypair,
             vault_type: VaultType::CAT,
         }
     }
@@ -213,12 +219,15 @@ impl VaultCovenant {
         let nums_key = XOnlyPublicKey::from_slice(point.to_xonly_bytes().as_slice())?;
         let secp = Secp256k1::new();
         Ok(TaprootBuilder::new()
-            .add_leaf(1, vault_trigger_withdrawal(self.x_only_public_key()))?
+            .add_leaf(1, vault_trigger_withdrawal(self.vault_x_only_public_key()))?
             .add_leaf(
                 2,
-                vault_complete_withdrawal(self.x_only_public_key(), self.timelock_in_blocks),
+                vault_complete_withdrawal(
+                    self.withdraw_x_only_public_key(),
+                    self.timelock_in_blocks,
+                ),
             )?
-            .add_leaf(2, vault_cancel_withdrawal(self.x_only_public_key()))?
+            .add_leaf(2, vault_cancel_withdrawal(self.cancel_x_only_public_key()))?
             .finalize(&secp, nums_key)
             .expect("finalizing taproot spend info with a NUMS point should always work"))
     }
@@ -248,10 +257,15 @@ impl VaultCovenant {
         Ok(TaprootBuilder::new()
             .add_leaf(
                 1,
-                ctv_vault_complete_withdrawal(self.x_only_public_key(), self.timelock_in_blocks),
+                ctv_vault_complete_withdrawal(
+                    self.withdraw_x_only_public_key(),
+                    self.timelock_in_blocks,
+                ),
             )?
-            .add_leaf(1, ctv_vault_cancel_withdrawal(self.x_only_public_key()))?
-            //.add_leaf(0, ctv_vault_cancel_withdrawal(self.x_only_public_key()))?
+            .add_leaf(
+                1,
+                ctv_vault_cancel_withdrawal(self.cancel_x_only_public_key()),
+            )?
             .finalize(&secp, nums_key)
             .expect("finalizing taproot spend info with a new keypair should always work"))
     }
@@ -297,8 +311,14 @@ impl VaultCovenant {
         hash.to_byte_array()
     }
 
-    fn x_only_public_key(&self) -> XOnlyPublicKey {
-        return self.keypair.x_only_public_key().0;
+    fn vault_x_only_public_key(&self) -> XOnlyPublicKey {
+        return self.vault_keypair.x_only_public_key().0;
+    }
+    fn withdraw_x_only_public_key(&self) -> XOnlyPublicKey {
+        return self.withdraw_keypair.x_only_public_key().0;
+    }
+    fn cancel_x_only_public_key(&self) -> XOnlyPublicKey {
+        return self.cancel_keypair.x_only_public_key().0;
     }
 
     fn sign_transaction(
@@ -306,6 +326,7 @@ impl VaultCovenant {
         txn: &Transaction,
         prevouts: &[TxOut],
         leaf_hash: TapLeafHash,
+        keypair: Keypair,
     ) -> Vec<u8> {
         let secp = Secp256k1::new();
         let mut sighashcache = SighashCache::new(txn);
@@ -318,7 +339,7 @@ impl VaultCovenant {
             )
             .unwrap();
         let message = Message::from_digest_slice(sighash.as_byte_array()).unwrap();
-        let signature = secp.sign_schnorr(&message, &self.keypair);
+        let signature = secp.sign_schnorr(&message, &keypair);
         let final_sig = Signature {
             sig: signature,
             hash_ty: TapSighashType::All,
@@ -367,7 +388,7 @@ impl VaultCovenant {
         };
 
         let leaf_hash = TapLeafHash::from_script(
-            &vault_trigger_withdrawal(self.x_only_public_key()),
+            &vault_trigger_withdrawal(self.vault_x_only_public_key()),
             LeafVersion::TapScript,
         );
         let vault_txout = TxOut {
@@ -440,16 +461,17 @@ impl VaultCovenant {
             &txn,
             &[vault_txout.clone(), fee_paying_output.clone()],
             leaf_hash,
+            self.vault_keypair,
         );
         vault_txin.witness.push(sig);
 
         vault_txin
             .witness
-            .push(vault_trigger_withdrawal(self.x_only_public_key()).to_bytes());
+            .push(vault_trigger_withdrawal(self.vault_x_only_public_key()).to_bytes());
         vault_txin.witness.push(
             self.taproot_spend_info()?
                 .control_block(&(
-                    vault_trigger_withdrawal(self.x_only_public_key()).clone(),
+                    vault_trigger_withdrawal(self.vault_x_only_public_key()).clone(),
                     LeafVersion::TapScript,
                 ))
                 .expect("control block should work")
@@ -498,7 +520,7 @@ impl VaultCovenant {
         };
 
         let leaf_hash = TapLeafHash::from_script(
-            &vault_complete_withdrawal(self.x_only_public_key(), self.timelock_in_blocks),
+            &vault_complete_withdrawal(self.withdraw_x_only_public_key(), self.timelock_in_blocks),
             LeafVersion::TapScript,
         );
         let vault_txout = TxOut {
@@ -593,17 +615,22 @@ impl VaultCovenant {
             &txn,
             &[vault_txout.clone(), fee_paying_output.clone()],
             leaf_hash,
+            self.withdraw_keypair,
         );
         vault_txin.witness.push(sig);
 
         vault_txin.witness.push(
-            vault_complete_withdrawal(self.x_only_public_key(), self.timelock_in_blocks).to_bytes(),
+            vault_complete_withdrawal(self.withdraw_x_only_public_key(), self.timelock_in_blocks)
+                .to_bytes(),
         );
         vault_txin.witness.push(
             self.taproot_spend_info()?
                 .control_block(&(
-                    vault_complete_withdrawal(self.x_only_public_key(), self.timelock_in_blocks)
-                        .clone(),
+                    vault_complete_withdrawal(
+                        self.withdraw_x_only_public_key(),
+                        self.timelock_in_blocks,
+                    )
+                    .clone(),
                     LeafVersion::TapScript,
                 ))
                 .expect("control block should work")
@@ -651,7 +678,7 @@ impl VaultCovenant {
         };
 
         let leaf_hash = TapLeafHash::from_script(
-            &vault_cancel_withdrawal(self.x_only_public_key()),
+            &vault_cancel_withdrawal(self.cancel_x_only_public_key()),
             LeafVersion::TapScript,
         );
         let vault_txout = TxOut {
@@ -716,16 +743,17 @@ impl VaultCovenant {
             &txn,
             &[vault_txout.clone(), fee_paying_output.clone()],
             leaf_hash,
+            self.cancel_keypair,
         );
         vault_txin.witness.push(sig);
 
         vault_txin
             .witness
-            .push(vault_cancel_withdrawal(self.x_only_public_key()).to_bytes());
+            .push(vault_cancel_withdrawal(self.cancel_x_only_public_key()).to_bytes());
         vault_txin.witness.push(
             self.taproot_spend_info()?
                 .control_block(&(
-                    vault_cancel_withdrawal(self.x_only_public_key()).clone(),
+                    vault_cancel_withdrawal(self.cancel_x_only_public_key()).clone(),
                     LeafVersion::TapScript,
                 ))
                 .expect("control block should work")
@@ -763,7 +791,10 @@ impl VaultCovenant {
             output: vec![output],
         };
         let leafhash = TapLeafHash::from_script(
-            &ctv_vault_complete_withdrawal(self.x_only_public_key(), self.timelock_in_blocks),
+            &ctv_vault_complete_withdrawal(
+                self.withdraw_x_only_public_key(),
+                self.timelock_in_blocks,
+            ),
             LeafVersion::TapScript,
         );
         let vault_txout = TxOut {
@@ -774,18 +805,22 @@ impl VaultCovenant {
             &txn,
             &[vault_txout.clone(), fee_paying_output.clone()],
             leafhash,
+            self.withdraw_keypair,
         );
         vault_txin.witness.push(sig);
 
         vault_txin.witness.push(
-            ctv_vault_complete_withdrawal(self.x_only_public_key(), self.timelock_in_blocks)
-                .to_bytes(),
+            ctv_vault_complete_withdrawal(
+                self.withdraw_x_only_public_key(),
+                self.timelock_in_blocks,
+            )
+            .to_bytes(),
         );
         vault_txin.witness.push(
             self.ctv_trigger_spend_info()?
                 .control_block(&(
                     ctv_vault_complete_withdrawal(
-                        self.x_only_public_key(),
+                        self.withdraw_x_only_public_key(),
                         self.timelock_in_blocks,
                     )
                     .clone(),
@@ -825,7 +860,7 @@ impl VaultCovenant {
             output: vec![output],
         };
         let leafhash = TapLeafHash::from_script(
-            &ctv_vault_cancel_withdrawal(self.x_only_public_key()),
+            &ctv_vault_cancel_withdrawal(self.cancel_x_only_public_key()),
             LeafVersion::TapScript,
         );
 
@@ -837,16 +872,17 @@ impl VaultCovenant {
             &txn,
             &[vault_txout.clone(), fee_paying_output.clone()],
             leafhash,
+            self.cancel_keypair,
         );
         vault_txin.witness.push(sig);
 
         vault_txin
             .witness
-            .push(ctv_vault_cancel_withdrawal(self.x_only_public_key()).to_bytes());
+            .push(ctv_vault_cancel_withdrawal(self.cancel_x_only_public_key()).to_bytes());
         vault_txin.witness.push(
             self.ctv_trigger_spend_info()?
                 .control_block(&(
-                    ctv_vault_cancel_withdrawal(self.x_only_public_key()).clone(),
+                    ctv_vault_cancel_withdrawal(self.cancel_x_only_public_key()).clone(),
                     LeafVersion::TapScript,
                 ))
                 .expect("control block should work")
