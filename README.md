@@ -1,96 +1,37 @@
-# A Prototype Vault using CAT
+# A Simple Bitcoin Vault with OP_CTV or OP_CAT
 
 ## What?
 
-This repo contains a demo of an onchain Bitcoin Vault using OP_CAT to create a covenant that allows for a multi-step withdrawal process to be validated onchain.
+This repo contains a demo of a (regtest) Bitcoin Vault that allows for a multi-step withdrawal process to be validated onchain. The basic pattern for this vault is comprised of a total of 3 states:
+- Inactive: the funds are safely stored in the vault and the withdrawal process as not been initiated
+- Triggered: the funds are in the intermediary unvaulting address and can only be spent in 2 ways:
+  1. cancel the withdrawal
+  2. wait X blocks and then withdraw the funds
+- Complete: the funds have been withdrawn from the vault
 
-Basically, you will have a special address called the vault. Coins from his address can **only** be spent in the following way:
+For the purposes of this demo cancelling a withdrawal will revault the coins, however in the real world it is more likely that cancel would send the funds to some sort of cold storage.
 
-- You can initiate a withdrawal from the vault by creating a transaction with 2 inputs (the vault as the first input, and a fee-paying second input), and two outputs (the vault with the amount to be withdrawn, and the target address with a dust amount).
-- Once the vault is in the Triggered state, you can either:
-  - Cancel the withdrawal by creating a transaction with 2 inputs (the vault as the first input, and a fee-paying second input), and one output (the vault with the amount that was previously withdrawn).
-  - Complete the withdrawal after a relative timelock of 20 blocks by creating a transaction with 2 inputs (the withdrawal as the first input, and a fee-paying second input), and one output (the target address with the amount that was previously withdrawn).
+This vault pattern has been implemented with both OP_CTV and OP_CAT and you can choose which implementation to use when running the demo. The goal of this demo was to wrap my head around what a OP_CAT vault looks like next to an OP_CTV vault.
 
-There is no other way to spend these coins. If you try to spend them in any other way, the transaction will be invalid.
+## Special Thanks
+
+This repo is basically copy pasta made possible by:
+- [rot13maxi](https://github.com/rot13maxi)'s [purrfect_vault](https://github.com/taproot-wizards/purrfect_vault) - from which I forked the framework for this demo and the OP_CAT vault implementation
+- [jamesob](https://github.com/jamesob)'s [simple-ctv-vault](https://github.com/jamesob/simple-ctv-vault) - as a reference for implementing the OP_CTV vault.
+- [ajtowns](https://github.com/ajtowns)'s [bitcoin-inquisition](https://github.com/bitcoin-inquisition/bitcoin) - which is a fork of bitcoin core that has OP_CAT and OP_CTV activated, this is used to run this vault on a chain that has these op codes live.
+- [stutxo](https://github.com/stutxo)'s [simple_ctv](https://github.com/stutxo/simple_ctv) and [ursuscamp](https://github.com/ursuscamp)'s [ctvlib](https://github.com/ursuscamp/ctvlib) - as references for implementing OP_CTV in Rust
 
 ## Vault Contract Construction
 
-[BIP341 signature validation has us create a message called a `SigMsg`](https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki#common-signature-message) that contains commitments to the fields of a transaction. That SigMsg is then used as the message in constructing a Schnorr signature. 
-[Andrew Polestra observed](https://medium.com/blockstream/cat-and-schnorr-tricks-i-faf1b59bd298) that if you set the Public Key (P) and Public Nonce Commitment (R) to the generator point (G), then the s value of the resulting Schnorr signature will be equal to the SigMsg + 1. 
-We are using that technique in order to allow for transaction introspection by passing in the SigMsg components as witness data, and then using OP_CAT to construct the SigMsg on the stack. 
-We then construct the tagged hashes specified in BIP341, and eventually CAT on an extra G to serve as the R component of the signature. Then we call CHECKSIG to validate the signature. 
-If it is valid, then it means we've constructed the SigMsg correctly, and the transaction is valid.
+For explanation of OP_CAT vault construction, please reference [purrfect_vault](https://github.com/taproot-wizards/purrfect_vault).
 
-We use that in a few different ways in this demo.
-
-All the scripts are commented and in the `src/vault/script.rs` file.
-
-
-### Trigger Withdrawal
-- Inputs
-  1. contract input
-  2. fee-paying input
-- Outputs
-  1. Contract output with amount to be withdrawn
-  2. Target address with dust amount
-
-We use the CAT-checksig technique to validate that the amount and scriptpubkey of the first input and first output are the same.
-We enforce that the second output is amount is exactly 546 sats, but we do not place any restrictions on the scriptpubkey. 
-We also enforce that there are two inputs and two outputs.
-
-
-### Complete Withdrawal
-- Inputs
-  1. Withdrawal input
-  2. Fee-paying input
-- Outputs
-  1. Destination output with contract amount
-
-This is probably the most interesting transaction. We want to enforce that the first output has the scriptpubkey that matches the second output of the **trigger** transaction.
-To validate this, we pass in the serialized transaction data (version, inputs, outputs, locktime) as witness data, do some manipulation of the outputs, and then hash this previous-transaction
-data twice to get the TXID. We then validate that the first input of the current transaction is the same as the TXID of the previous transaction with vout=0. This 
-ensures that the first input of the current transaction is the same as the first output of the previous transaction, and lets us *inspect the state of the previous transaction*.
-
-The first output of this transaction is enforced to be the scriptpubkey of the second output of the trigger, and the amount is enforced to be the same as the amount of the first output of the trigger.
-The second input is unencumbered and used for change. 
-
-There is also a plain-old CSV relative timelock of 20 blocks on the first input.
-
-
-### Cancel Withdrawal
-- Inputs
-  1. Any contract input
-  2. Fee-paying input
-- Outputs
-  1. Contract output
-
-This is the simplest transaction. We just enforce that there are two inputs and one output, and that the first input is the same as the first output.
-
-## Limitations and Considerations
-
-All the vault operations spend one vault input and create one vault output. This is a limitation of the current implementation. 
-If you naively allow spending multiple vault inputs (to batch withdrawals or to consolidate vaults) or outputs (to allow partial withdrawals), 
-you open yourself up to attacks where an adversary can spend vault inputs to fees. What you want is to be able to validate that all the vault 
-input amounts add up to the vault output amounts. For that we need either 64-bit arithmetic (which should be doable with CAT 
-by doing a mini big-num implementation), or you need to have different tapscripts with pre-defined amounts, or you just only use vaults with 32-bit amounts. 
-I think doing 64-bit add in CAT is the most interesting, but I haven't done it yet.
-
-Right now the vault always spends back to itself when you cancel. In real life you might want to have it go to a different script with different keys. 
-That would be an easy change to make, but was elided for simplicity in this demo.
-
-The Schnorr signature that you create on the stack is equal to SigMsg + 1. You need to grind the transaction data to get the right last bytes of the signature.
-I use a combination of grinding the low-order bits of the Locktime and the Sequence number of the last input in order to get a signature with the last byte. 
-Luckily, there are only two values that are not allowed for the last byte (0x7f and 0xff), so the grinding is easy. See [this post for more details](https://delvingbitcoin.org/t/efficient-multi-input-transaction-grinding-for-op-cat-based-bitcoin-covenants/1080).
-
-Re-building a TXID on the stack to introspect previous transactions was actually easier than I expected. Two wrinkles I ran into were:
-- There is a standardness rule on witness stack items (80 bytes). I had to split the outputs of the previous transaction into two chunks in order to get them on the stack and then glue it together with OP_CAT.
-- There is a consensus limit on stack item size (520 bytes). I had to be careful to not exceed that limit when I was building the TXID. Because my trigger transaction is tightly constrained, it was ok. If I wanted to inspect the previous state of an arbitrary transaction, I would have to be more careful.
+For explanation of OP_CTV vault construction, please reference [simple-ctv-vault](https://github.com/jamesob/simple-ctv-vault). A major difference between [simple-ctv-vault](https://github.com/jamesob/simple-ctv-vault) and this vault is that the former cancels the withdrawal by way of another OP_CTV which only spends to a cold wallet, whereas this vault cancels the withdrawal by sending funds back to the vault.
 
 ## How to run it
 
 You will need to be able to build bitcoin-core. Go get set up with a C++ compiler for your platform. Those directions are outside the scope of this document.
 
-From there, there are some scripts and helpers in this project to build a copy of bitcoin-core that has OP_CAT enabled, and then you can use [Just](https://github.com/casey/just) as a command runner to build and run the vault demo.
+From there, there are some scripts and helpers in this project to build a copy of bitcoin-core that has OP_CAT and OP_CTV enabled, and then you can use [Just](https://github.com/casey/just) as a command runner to build and run the vault demo.
 
 If you have a rust toolchain installed, and don't want to use `just`, you can also just poke around yourself. Choose your own adventure!
 
@@ -99,16 +40,16 @@ This project can use [Hermit](https://cashapp.github.io/hermit/) to provide a co
 
 To activate the hermit environment, run `source bin/activate-hermit` and it will set up a shell environment with the tools you need. 
 
-Run `just bootstrap` to checkout and build a copy of bitcoin-core with OP_CAT enabled. It will be placed in a directory called `bitcoin-core-cat` in the root of the project.
-It will also build the `purrfect_vault` binary, which is the demo.
+Run `just bootstrap` to checkout and build a copy of bitcoin-core with OP_CAT and OP_CTV enabled. It will be placed in a directory called `bitcoin-core-inq` in the root of the project.
+It will also build the `simple_covenant_vault` binary, which is the demo.
 
 Proceed to the "Running the demo" section.
 
 ### Have `just` and `cargo` already installed?
 You're all set!
 
-Run `just bootstrap` to checkout and build a copy of bitcoin-core with OP_CAT enabled. It will be placed in a directory called `bitcoin-core-cat` in the root of the project.
-It will also build the `purrfect_vault` binary, which is the demo. 
+Run `just bootstrap` to checkout and build a copy of bitcoin-core with OP_CAT and OP_CTV enabled. It will be placed in a directory called `bitcoin-core-inq` in the root of the project.
+It will also build the `simple_covenant_vault` binary, which is the demo. 
 
 Proceed to the "Running the demo" section.
 
@@ -116,44 +57,27 @@ Proceed to the "Running the demo" section.
 
 Follow these steps to create a vault that is configured to allow a withdrawal after 20 blocks. You will try to "steal" from this vault, see that a theft is in-progress and foil the theft. Then you will trigger a new withdrawal and complete it.
 
-These steps use `just` as a command wrapper around the `purrfect_vault` binary to set the log level. If you don't want to use `just`, you can run the `purrfect_vault` binary directly from the `target/release/` directory with the same arguments, or pass `-h` to see options.
+These steps use `just` as a command wrapper around the `simple_covenant_vault` binary to set the log level. If you don't want to use `just`, you can run the `simple_covenant_vault` binary directly from the `target/release/` directory with the same arguments, or pass `-h` to see options.
 
-1. Run a CAT-enabled bitcoind in regtest mode. This will be done either using `just bootstrap`, or you can run it with `just start-bitcoind`, or run it yourself with the `bitcoin-core-cat` binary that was built.
-2. Start by running `just deposit`. This will create a miner wallet, mine some coins, and then create a new vault and deposit some coins into it.
-3. Run `just status` to see the status of the vault.
-4. Try to steal from the vault with `just steal`. This will generate an address from the miner wallet and initiate a withdrawal to it. Alternatively you can execute the `purrfect_vault` binary with the `steal` subcommand and pass an address of your choosing. It will also mine a block to confirm the transaction
-5. Run `just status` to see the status of the vault and see that the on-chain state of the vault is that it's in a withdrawal-triggered state, but that the internal state of the wallet is that no withdrawal is in-progress, so it looks like a theft is happening! oh no!
-6. Foil the theft with `just cancel`. This will send the coins back to the vault and mine a block to confirm the transaction.
-4. Initiate a withdrawal from the vault with `just trigger`. This will generate an address from the miner wallet and initiate a withdrawal to it. Alternatively you can execute the `purrfect_vault` binary with the `trigger` subcommand and pass an address of your choosing. It will also mine a block to confirm the transaction
-5. Run `just status` to see the status of the vault and see that the vault is in the Triggered state.
-6. Complete the withdrawal with `just complete`. This will mine 20 blocks to satisfy the timelock, send the withdrawal-completion transaction, and then a block to confirm the transaction.
+1. Run a covenant enabled bitcoind in regtest mode. This will be done either using `just bootstrap`, or you can run it with `just start-bitcoind`, or run it yourself with the `bitcoin-core-inq` binary that was built. If you already have an existing covenant enabled bitcoind binary that you would like to use instead, update the `bitcoin_src` variable in the `justfile` file to point to the location of of your existing bitcoind (and bitcoin-cli) binary and run `just start-bitcoind`.
+2. Run `just switch` to choose between the OP_CTV vault (the default) and the OP_CAT vault.
+3. Start by running `just deposit`. This will create a miner wallet, mine some coins, and then create a new vault and deposit some coins into it.
+4. Run `just status` to see the status of the vault.
+5. Try to steal from the vault with `just steal`. This will generate an address from the miner wallet and initiate a withdrawal to it. Alternatively you can execute the `simple_covenant_vault` binary with the `steal` subcommand and pass an address of your choosing. It will also mine a block to confirm the transaction
+6. Run `just status` to see the status of the vault and see that the on-chain state of the vault is that it's in a withdrawal-triggered state, but that the internal state of the wallet is that no withdrawal is in-progress, so it looks like a theft is happening! oh no!
+7. Foil the theft with `just cancel`. This will send the coins back to the vault and mine a block to confirm the transaction.
+8. Initiate a withdrawal from the vault with `just trigger`. This will generate an address from the miner wallet and initiate a withdrawal to it. Alternatively you can execute the `simple_covenant_vault` binary with the `trigger` subcommand and pass an address of your choosing. It will also mine a block to confirm the transaction
+9. Run `just status` to see the status of the vault and see that the vault is in the Triggered state.
+10. Complete the withdrawal with `just complete`. This will mine 20 blocks to satisfy the timelock, send the withdrawal-completion transaction, and then a block to confirm the transaction.
+11. To re-run the demo use `just delete` to delete the existing vault.
 
+To access the bitcoin-cli you can use `just bcli`.
 
-## FAQ
+## Comparisons Between Implementations
 
-### Wow. This is a lot of spaghetti.
-
-That's not a question. Also, yes. This was hacked together and then I released it. It needs some good honest refactoring. PR's welcome. 
-
-### Why doesn't this support [feature]?
-
-I wanted to see if I could get a vault working with CAT. I didn't want to get bogged down in the details of a full-featured vault. I'm sure there are many features that are missing.
-The things that I wanted to explore were:
-- Can you do input/output validation with CAT?
-- Can you partially validate inputs/outputs with CAT (i.e. check the amount, but not the scriptpubkey)?
-- Can you do a multi-step process with CAT (i.e. deposit, then withdrawal)? Either by inspecting the transaction history, or by having a multi-step process in a single transaction.
-
-We're able to do all of these things with CAT, so I'm happy with the results.
-
-### How big are these transactions? These script look gnarly!
-- Trigger: 321.75 vB, 1.29 kWU
-- Cancel: 289.25 vB, 1.16 kWU
-- Complete: 320 vB, 1.28 kWU
-
-They'd get a little bigger with a signature check, but not much.
-
-### Seems like we could get rid of some of these CATs by just concatenating elements before they go into the witness. Why don't we do that?
-Yep! There is quite a bit of script optimization that could be done. I have a generic function for getting the SigMsg components and I just use that everywhere.
-
-### Can I contribute?
-Yes! PR's welcome. I'm happy to review and help you get your PR merged. I'm also happy to help you get set up with the project if you're having trouble. Just ask!
+| Tx Type  | CTV                                 | CAT                                   |
+|----------|-------------------------------------|---------------------------------------|
+| Deposit  | `size`:205 `vsize`:154 `weight`:616 | `size`:205 `vsize`:154 `weight`:616   |
+| Trigger  | `size`:273 `vsize`:170 `weight`:678 | `size`:892 `vsize`:357 `weight`:1426  |
+| Cancel   | `size`:371 `vsize`:194 `weight`:776 | `size`:831 `vsize`:309 `weight`:1236  |
+| Complete | `size`:375 `vsize`:195 `weight`:780 | `size`:1013 `vsize`:355 `weight`:1418 |
